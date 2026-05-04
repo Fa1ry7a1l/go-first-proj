@@ -1,4 +1,4 @@
-// Package app wires service dependencies and controls the application lifecycle.
+// Package app связывает зависимости сервиса и управляет жизненным циклом приложения.
 package app
 
 import (
@@ -10,31 +10,49 @@ import (
 
 	"github.com/Fa1ry7a1l/go-first-proj/internal/config"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/httpapi"
+	"github.com/Fa1ry7a1l/go-first-proj/internal/service"
+	"github.com/Fa1ry7a1l/go-first-proj/internal/storage/postgres"
 )
 
 const shutdownTimeout = 5 * time.Second
 
-// App is the runnable Gophermart application.
+// App представляет запускаемое приложение Gophermart.
 type App struct {
 	cfg    config.Config
 	server *http.Server
+	close  func()
 }
 
-// New creates an application instance with all dependencies wired.
-func New(cfg config.Config) *App {
+// New создает экземпляр приложения и подключает необходимые зависимости.
+func New(ctx context.Context, cfg config.Config) (*App, error) {
+	var orderService *service.OrderService
+	closeStorage := func() {}
+
+	if cfg.DatabaseURI != "" {
+		storage, err := postgres.New(ctx, cfg.DatabaseURI)
+		if err != nil {
+			return nil, err
+		}
+		orderService = service.NewOrderService(storage)
+		closeStorage = storage.Close
+	}
+
 	return &App{
 		cfg: cfg,
 		server: &http.Server{
 			Addr:              cfg.RunAddress,
-			Handler:           httpapi.NewRouter(),
+			Handler:           httpapi.NewRouter(orderService),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-	}
+		close: closeStorage,
+	}, nil
 }
 
-// Run starts the HTTP server and blocks until the provided context is canceled
-// or the server returns an unexpected error.
+// Run запускает HTTP-сервер и блокируется до отмены контекста или неожиданной
+// ошибки сервера.
 func (a *App) Run(ctx context.Context) error {
+	defer a.close()
+
 	errCh := make(chan error, 1)
 
 	go func() {

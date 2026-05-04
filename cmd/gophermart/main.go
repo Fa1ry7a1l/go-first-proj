@@ -15,7 +15,12 @@ func main() {
 	defer stop()
 
 	cfg := config.Parse()
-	if err := app.New(cfg).Run(ctx); err != nil {
+	application, err := app.New(ctx, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := application.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
 }

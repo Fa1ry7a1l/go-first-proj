@@ -1,4 +1,4 @@
-// Package config reads runtime settings for the Gophermart service.
+// Package config читает настройки запуска сервиса Gophermart.
 package config
 
 import (
@@ -14,22 +14,26 @@ const (
 	envAccrualSystemAddress = "ACCRUAL_SYSTEM_ADDRESS"
 )
 
-// Config contains runtime settings required to start the service.
+// Config содержит настройки, необходимые для запуска сервиса.
 type Config struct {
-	RunAddress           string
-	DatabaseURI          string
+	// RunAddress содержит адрес и порт HTTP-сервера.
+	RunAddress string
+
+	// DatabaseURI содержит строку подключения к PostgreSQL.
+	DatabaseURI string
+
+	// AccrualSystemAddress содержит базовый адрес внешней системы начислений.
 	AccrualSystemAddress string
 }
 
-// Parse reads configuration from command-line flags and environment variables.
-// Environment variables have priority over flags.
+// Parse читает конфигурацию из аргументов командной строки и переменных окружения.
+// Переменные окружения имеют приоритет над флагами.
 func Parse() Config {
 	return ParseFromArgs(os.Args[1:], os.Getenv)
 }
 
-// ParseFromArgs reads configuration from the provided arguments and getenv
-// function. It is intended for tests and for callers that need isolated flag
-// parsing.
+// ParseFromArgs читает конфигурацию из переданных аргументов и функции getenv.
+// Функция нужна для тестов и случаев, где требуется изолированный разбор флагов.
 func ParseFromArgs(args []string, getenv func(string) string) Config {
 	cfg := Config{
 		RunAddress: defaultRunAddress,
