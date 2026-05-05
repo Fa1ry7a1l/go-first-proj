@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Fa1ry7a1l/go-first-proj/internal/auth"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/domain"
@@ -14,7 +16,12 @@ import (
 
 func TestRegisterAuthenticatesUser(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), auth.NewTokenManager("secret"))
+	router := NewRouter(
+		service.NewUserService(storage),
+		service.NewOrderService(storage),
+		service.NewBalanceService(storage),
+		auth.NewTokenManager("secret"),
+	)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"user","password":"secret"}`))
 	response := httptest.NewRecorder()
@@ -34,7 +41,12 @@ func TestRegisterAuthenticatesUser(t *testing.T) {
 
 func TestRegisterRejectsDuplicateLogin(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), auth.NewTokenManager("secret"))
+	router := NewRouter(
+		service.NewUserService(storage),
+		service.NewOrderService(storage),
+		service.NewBalanceService(storage),
+		auth.NewTokenManager("secret"),
+	)
 
 	first := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"user","password":"secret"}`))
 	router.ServeHTTP(httptest.NewRecorder(), first)
@@ -51,7 +63,7 @@ func TestRegisterRejectsDuplicateLogin(t *testing.T) {
 func TestLoginRejectsInvalidPassword(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	userService := service.NewUserService(storage)
-	router := NewRouter(userService, service.NewOrderService(storage), auth.NewTokenManager("secret"))
+	router := NewRouter(userService, service.NewOrderService(storage), service.NewBalanceService(storage), auth.NewTokenManager("secret"))
 
 	if _, err := userService.Register(context.Background(), "user", "secret"); err != nil {
 		t.Fatalf("Register returned error: %v", err)
@@ -68,7 +80,12 @@ func TestLoginRejectsInvalidPassword(t *testing.T) {
 
 func TestOrdersRequireAuthorization(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), auth.NewTokenManager("secret"))
+	router := NewRouter(
+		service.NewUserService(storage),
+		service.NewOrderService(storage),
+		service.NewBalanceService(storage),
+		auth.NewTokenManager("secret"),
+	)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
 	response := httptest.NewRecorder()
@@ -82,7 +99,7 @@ func TestOrdersRequireAuthorization(t *testing.T) {
 func TestUploadOrderUsesAuthenticatedUser(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), tokenManager)
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader("12345678903"))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -97,10 +114,103 @@ func TestUploadOrderUsesAuthenticatedUser(t *testing.T) {
 	}
 }
 
+func TestGetBalance(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	points := domain.Points(12550)
+	storage.orders["processed"] = domain.Order{
+		UserID:  12,
+		Number:  "12345678903",
+		Status:  domain.OrderStatusProcessed,
+		Accrual: &points,
+	}
+	storage.withdrawals = append(storage.withdrawals, domain.Withdrawal{
+		UserID: 12,
+		Sum:    2550,
+	})
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var body balanceResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode balance: %v", err)
+	}
+	if body.Current != 100 || body.Withdrawn != 25.5 {
+		t.Fatalf("balance = %+v, want current 100 and withdrawn 25.5", body)
+	}
+}
+
+func TestWithdraw(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	points := domain.Points(10000)
+	storage.orders["processed"] = domain.Order{
+		UserID:  12,
+		Number:  "12345678903",
+		Status:  domain.OrderStatusProcessed,
+		Accrual: &points,
+	}
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"12345678903","sum":25.5}`))
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if len(storage.withdrawals) != 1 {
+		t.Fatalf("withdrawals = %d, want 1", len(storage.withdrawals))
+	}
+	if storage.withdrawals[0].Sum != 2550 {
+		t.Fatalf("withdrawal sum = %d, want 2550", storage.withdrawals[0].Sum)
+	}
+}
+
+func TestWithdrawRejectsInsufficientFunds(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"12345678903","sum":25.5}`))
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusPaymentRequired)
+	}
+}
+
+func TestWithdrawalsReturnsNoContentWhenEmpty(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/user/withdrawals", nil)
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+}
+
 type httpFakeStorage struct {
-	nextUserID int64
-	users      map[string]domain.User
-	orders     map[string]domain.Order
+	nextUserID  int64
+	users       map[string]domain.User
+	orders      map[string]domain.Order
+	withdrawals []domain.Withdrawal
 }
 
 func newHTTPFakeStorage() *httpFakeStorage {
@@ -153,4 +263,49 @@ func (s *httpFakeStorage) ListUserOrders(_ context.Context, userID int64) ([]dom
 		}
 	}
 	return orders, nil
+}
+
+func (s *httpFakeStorage) GetBalance(_ context.Context, userID int64) (domain.Balance, error) {
+	var accrued domain.Points
+	for _, order := range s.orders {
+		if order.UserID == userID && order.Status == domain.OrderStatusProcessed && order.Accrual != nil {
+			accrued += *order.Accrual
+		}
+	}
+
+	var withdrawn domain.Points
+	for _, withdrawal := range s.withdrawals {
+		if withdrawal.UserID == userID {
+			withdrawn += withdrawal.Sum
+		}
+	}
+
+	return domain.Balance{
+		Current:   accrued - withdrawn,
+		Withdrawn: withdrawn,
+	}, nil
+}
+
+func (s *httpFakeStorage) CreateWithdrawal(ctx context.Context, withdrawal domain.Withdrawal) error {
+	balance, err := s.GetBalance(ctx, withdrawal.UserID)
+	if err != nil {
+		return err
+	}
+	if balance.Current < withdrawal.Sum {
+		return domain.ErrInsufficientFunds
+	}
+	withdrawal.ID = int64(len(s.withdrawals) + 1)
+	withdrawal.ProcessedAt = time.Now()
+	s.withdrawals = append(s.withdrawals, withdrawal)
+	return nil
+}
+
+func (s *httpFakeStorage) ListWithdrawals(_ context.Context, userID int64) ([]domain.Withdrawal, error) {
+	var withdrawals []domain.Withdrawal
+	for _, withdrawal := range s.withdrawals {
+		if withdrawal.UserID == userID {
+			withdrawals = append(withdrawals, withdrawal)
+		}
+	}
+	return withdrawals, nil
 }

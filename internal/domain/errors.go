@@ -32,4 +32,10 @@ var (
 
 	// ErrOrderNotFound означает, что заказ с указанным номером отсутствует в хранилище.
 	ErrOrderNotFound = errors.New("order not found")
+
+	// ErrInsufficientFunds означает, что у пользователя недостаточно баллов для списания.
+	ErrInsufficientFunds = errors.New("insufficient funds")
+
+	// ErrWithdrawalInvalidSum означает, что сумма списания не является положительным числом.
+	ErrWithdrawalInvalidSum = errors.New("withdrawal sum is invalid")
 )

@@ -21,17 +21,24 @@ const (
 
 // Router обрабатывает HTTP-запросы к API Gophermart.
 type Router struct {
-	users  *service.UserService
-	orders *service.OrderService
-	tokens *auth.TokenManager
+	users    *service.UserService
+	orders   *service.OrderService
+	balances *service.BalanceService
+	tokens   *auth.TokenManager
 }
 
 // NewRouter создает дерево HTTP-обработчиков сервиса.
-func NewRouter(users *service.UserService, orders *service.OrderService, tokens *auth.TokenManager) http.Handler {
+func NewRouter(
+	users *service.UserService,
+	orders *service.OrderService,
+	balances *service.BalanceService,
+	tokens *auth.TokenManager,
+) http.Handler {
 	router := &Router{
-		users:  users,
-		orders: orders,
-		tokens: tokens,
+		users:    users,
+		orders:   orders,
+		balances: balances,
+		tokens:   tokens,
 	}
 
 	mux := http.NewServeMux()
@@ -39,6 +46,9 @@ func NewRouter(users *service.UserService, orders *service.OrderService, tokens 
 	mux.HandleFunc("/api/user/register", router.handleRegister)
 	mux.HandleFunc("/api/user/login", router.handleLogin)
 	mux.HandleFunc("/api/user/orders", router.handleUserOrders)
+	mux.HandleFunc("/api/user/balance", router.handleBalance)
+	mux.HandleFunc("/api/user/balance/withdraw", router.handleWithdraw)
+	mux.HandleFunc("/api/user/withdrawals", router.handleWithdrawals)
 	return mux
 }
 
@@ -61,6 +71,103 @@ func (rt *Router) handleUserOrders(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (rt *Router) handleBalance(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.authorize(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if rt.balances == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	balance, err := rt.balances.GetBalance(r.Context(), userID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, balanceResponse{
+		Current:   balance.Current.Float64(),
+		Withdrawn: balance.Withdrawn.Float64(),
+	})
+}
+
+func (rt *Router) handleWithdraw(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.authorize(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if rt.balances == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var request withdrawRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	err := rt.balances.Withdraw(r.Context(), userID, request.Order, domain.PointsFromFloat64(request.Sum))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusOK)
+	case errors.Is(err, domain.ErrInsufficientFunds):
+		w.WriteHeader(http.StatusPaymentRequired)
+	case errors.Is(err, domain.ErrOrderInvalidNumber):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	case errors.Is(err, domain.ErrWithdrawalInvalidSum):
+		w.WriteHeader(http.StatusBadRequest)
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (rt *Router) handleWithdrawals(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.authorize(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if rt.balances == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	withdrawals, err := rt.balances.ListWithdrawals(r.Context(), userID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if len(withdrawals) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	response := make([]withdrawalResponse, 0, len(withdrawals))
+	for _, withdrawal := range withdrawals {
+		response = append(response, withdrawalResponse{
+			Order:       withdrawal.OrderNumber,
+			Sum:         withdrawal.Sum.Float64(),
+			ProcessedAt: withdrawal.ProcessedAt.Format(time.RFC3339),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +291,22 @@ type orderResponse struct {
 	Status     string   `json:"status"`
 	Accrual    *float64 `json:"accrual,omitempty"`
 	UploadedAt string   `json:"uploaded_at"`
+}
+
+type balanceResponse struct {
+	Current   float64 `json:"current"`
+	Withdrawn float64 `json:"withdrawn"`
+}
+
+type withdrawRequest struct {
+	Order string  `json:"order"`
+	Sum   float64 `json:"sum"`
+}
+
+type withdrawalResponse struct {
+	Order       string  `json:"order"`
+	Sum         float64 `json:"sum"`
+	ProcessedAt string  `json:"processed_at"`
 }
 
 type credentialsRequest struct {

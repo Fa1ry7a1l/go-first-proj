@@ -28,6 +28,7 @@ type App struct {
 func New(ctx context.Context, cfg config.Config) (*App, error) {
 	var orderService *service.OrderService
 	var userService *service.UserService
+	var balanceService *service.BalanceService
 	closeStorage := func() {}
 
 	if cfg.DatabaseURI != "" {
@@ -37,6 +38,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		orderService = service.NewOrderService(storage)
 		userService = service.NewUserService(storage)
+		balanceService = service.NewBalanceService(storage)
 		closeStorage = storage.Close
 	}
 	tokenManager := auth.NewTokenManager("")
@@ -45,7 +47,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		cfg: cfg,
 		server: &http.Server{
 			Addr:              cfg.RunAddress,
-			Handler:           httpapi.NewRouter(userService, orderService, tokenManager),
+			Handler:           httpapi.NewRouter(userService, orderService, balanceService, tokenManager),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		close: closeStorage,

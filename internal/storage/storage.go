@@ -27,3 +27,15 @@ type OrderStorage interface {
 	// ListUserOrders возвращает заказы пользователя в порядке от новых к старым.
 	ListUserOrders(ctx context.Context, userID int64) ([]domain.Order, error)
 }
+
+// BalanceStorage описывает операции чтения баланса и записи списаний.
+type BalanceStorage interface {
+	// GetBalance возвращает текущий баланс пользователя.
+	GetBalance(ctx context.Context, userID int64) (domain.Balance, error)
+
+	// CreateWithdrawal создает списание баллов, если доступного баланса достаточно.
+	CreateWithdrawal(ctx context.Context, withdrawal domain.Withdrawal) error
+
+	// ListWithdrawals возвращает списания пользователя в порядке от новых к старым.
+	ListWithdrawals(ctx context.Context, userID int64) ([]domain.Withdrawal, error)
+}
