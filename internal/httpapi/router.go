@@ -49,7 +49,7 @@ func NewRouter(
 	mux.HandleFunc("/api/user/balance", router.handleBalance)
 	mux.HandleFunc("/api/user/balance/withdraw", router.handleWithdraw)
 	mux.HandleFunc("/api/user/withdrawals", router.handleWithdrawals)
-	return mux
+	return gzipMiddleware(mux)
 }
 
 func handlePing(w http.ResponseWriter, _ *http.Request) {
@@ -128,7 +128,7 @@ func (rt *Router) handleWithdraw(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, domain.ErrOrderInvalidNumber):
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	case errors.Is(err, domain.ErrWithdrawalInvalidSum):
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusUnprocessableEntity)
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 	}

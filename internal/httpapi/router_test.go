@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -114,6 +117,38 @@ func TestUploadOrderUsesAuthenticatedUser(t *testing.T) {
 	}
 }
 
+func TestUploadOrderReadsGzipBody(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/user/orders", bytes.NewReader(gzipBytes(t, "12345678903")))
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	request.Header.Set("Content-Encoding", "gzip")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusAccepted)
+	}
+}
+
+func TestUploadOrderRejectsBrokenGzipBody(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader("not gzip"))
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	request.Header.Set("Content-Encoding", "gzip")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
 func TestGetBalance(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	points := domain.Points(12550)
@@ -145,6 +180,39 @@ func TestGetBalance(t *testing.T) {
 	}
 	if body.Current != 100 || body.Withdrawn != 25.5 {
 		t.Fatalf("balance = %+v, want current 100 and withdrawn 25.5", body)
+	}
+}
+
+func TestGetBalanceWritesGzipResponse(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	request.Header.Set("Accept-Encoding", "gzip")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if response.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", response.Header().Get("Content-Encoding"))
+	}
+
+	reader, err := gzip.NewReader(response.Body)
+	if err != nil {
+		t.Fatalf("create gzip reader: %v", err)
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read gzip body: %v", err)
+	}
+	if !strings.Contains(string(body), `"current":0`) {
+		t.Fatalf("body = %s, want current field", body)
 	}
 }
 
@@ -191,6 +259,21 @@ func TestWithdrawRejectsInsufficientFunds(t *testing.T) {
 	}
 }
 
+func TestWithdrawRejectsInvalidSum(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"12345678903","sum":0}`))
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnprocessableEntity)
+	}
+}
+
 func TestWithdrawalsReturnsNoContentWhenEmpty(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
@@ -204,6 +287,52 @@ func TestWithdrawalsReturnsNoContentWhenEmpty(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
 	}
+}
+
+func TestWithdrawalsReturnsRFC3339Time(t *testing.T) {
+	storage := newHTTPFakeStorage()
+	storage.withdrawals = append(storage.withdrawals, domain.Withdrawal{
+		UserID:      12,
+		OrderNumber: "12345678903",
+		Sum:         2550,
+		ProcessedAt: time.Date(2026, 5, 5, 10, 11, 12, 0, time.UTC),
+	})
+	tokenManager := auth.NewTokenManager("secret")
+	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/user/withdrawals", nil)
+	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var body []withdrawalResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode withdrawals: %v", err)
+	}
+	if len(body) != 1 {
+		t.Fatalf("withdrawals = %d, want 1", len(body))
+	}
+	if body[0].ProcessedAt != "2026-05-05T10:11:12Z" {
+		t.Fatalf("processed_at = %q, want RFC3339", body[0].ProcessedAt)
+	}
+}
+
+func gzipBytes(t *testing.T, value string) []byte {
+	t.Helper()
+
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	if _, err := writer.Write([]byte(value)); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return buffer.Bytes()
 }
 
 type httpFakeStorage struct {
