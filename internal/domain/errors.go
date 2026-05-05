@@ -6,6 +6,18 @@ import "errors"
 // Доменные ошибки возвращаются сервисами и реализациями хранилища, чтобы HTTP-слой
 // мог преобразовать их в корректные коды ответа.
 var (
+	// ErrInvalidCredentials означает, что логин или пароль пользователя неверны.
+	ErrInvalidCredentials = errors.New("invalid credentials")
+
+	// ErrUserAlreadyExists означает, что пользователь с таким логином уже зарегистрирован.
+	ErrUserAlreadyExists = errors.New("user already exists")
+
+	// ErrUserInvalidCredentialsFormat означает, что логин или пароль отсутствуют в запросе.
+	ErrUserInvalidCredentialsFormat = errors.New("invalid credentials format")
+
+	// ErrUserNotFound означает, что пользователь с указанным логином отсутствует в хранилище.
+	ErrUserNotFound = errors.New("user not found")
+
 	// ErrOrderInvalidFormat означает, что номер заказа пустой или содержит нецифровые символы.
 	ErrOrderInvalidFormat = errors.New("order number has invalid format")
 

@@ -7,6 +7,15 @@ import (
 	"github.com/Fa1ry7a1l/go-first-proj/internal/domain"
 )
 
+// UserStorage описывает операции чтения и записи пользователей.
+type UserStorage interface {
+	// CreateUser сохраняет нового пользователя.
+	CreateUser(ctx context.Context, user domain.User) (domain.User, error)
+
+	// GetUserByLogin возвращает пользователя по логину.
+	GetUserByLogin(ctx context.Context, login string) (domain.User, error)
+}
+
 // OrderStorage описывает операции чтения и записи заказов пользователя.
 type OrderStorage interface {
 	// CreateOrder сохраняет новый заказ пользователя.

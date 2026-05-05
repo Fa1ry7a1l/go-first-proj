@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Fa1ry7a1l/go-first-proj/internal/auth"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/config"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/httpapi"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/service"
@@ -26,6 +27,7 @@ type App struct {
 // New создает экземпляр приложения и подключает необходимые зависимости.
 func New(ctx context.Context, cfg config.Config) (*App, error) {
 	var orderService *service.OrderService
+	var userService *service.UserService
 	closeStorage := func() {}
 
 	if cfg.DatabaseURI != "" {
@@ -34,14 +36,16 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			return nil, err
 		}
 		orderService = service.NewOrderService(storage)
+		userService = service.NewUserService(storage)
 		closeStorage = storage.Close
 	}
+	tokenManager := auth.NewTokenManager("")
 
 	return &App{
 		cfg: cfg,
 		server: &http.Server{
 			Addr:              cfg.RunAddress,
-			Handler:           httpapi.NewRouter(orderService),
+			Handler:           httpapi.NewRouter(userService, orderService, tokenManager),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		close: closeStorage,

@@ -2,33 +2,42 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Fa1ry7a1l/go-first-proj/internal/auth"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/domain"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/service"
 )
 
 const (
-	mvpUserID int64 = 1
+	authCookieName = "gophermart_auth"
 )
 
 // Router обрабатывает HTTP-запросы к API Gophermart.
 type Router struct {
+	users  *service.UserService
 	orders *service.OrderService
+	tokens *auth.TokenManager
 }
 
 // NewRouter создает дерево HTTP-обработчиков сервиса.
-func NewRouter(orders *service.OrderService) http.Handler {
+func NewRouter(users *service.UserService, orders *service.OrderService, tokens *auth.TokenManager) http.Handler {
 	router := &Router{
+		users:  users,
 		orders: orders,
+		tokens: tokens,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", handlePing)
+	mux.HandleFunc("/api/user/register", router.handleRegister)
+	mux.HandleFunc("/api/user/login", router.handleLogin)
 	mux.HandleFunc("/api/user/orders", router.handleUserOrders)
 	return mux
 }
@@ -39,17 +48,80 @@ func handlePing(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (rt *Router) handleUserOrders(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.authorize(w, r)
+	if !ok {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPost:
-		rt.handleUploadOrder(w, r)
+		rt.handleUploadOrder(w, r, userID)
 	case http.MethodGet:
-		rt.handleListOrders(w, r)
+		rt.handleListOrders(w, r, userID)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
-func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request) {
+func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if rt.users == nil || rt.tokens == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	request, ok := readCredentials(w, r)
+	if !ok {
+		return
+	}
+
+	user, err := rt.users.Register(r.Context(), request.Login, request.Password)
+	switch {
+	case err == nil:
+		rt.authenticate(w, user.ID)
+		w.WriteHeader(http.StatusOK)
+	case errors.Is(err, domain.ErrUserInvalidCredentialsFormat):
+		w.WriteHeader(http.StatusBadRequest)
+	case errors.Is(err, domain.ErrUserAlreadyExists):
+		w.WriteHeader(http.StatusConflict)
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (rt *Router) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if rt.users == nil || rt.tokens == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	request, ok := readCredentials(w, r)
+	if !ok {
+		return
+	}
+
+	user, err := rt.users.Login(r.Context(), request.Login, request.Password)
+	switch {
+	case err == nil:
+		rt.authenticate(w, user.ID)
+		w.WriteHeader(http.StatusOK)
+	case errors.Is(err, domain.ErrUserInvalidCredentialsFormat):
+		w.WriteHeader(http.StatusBadRequest)
+	case errors.Is(err, domain.ErrInvalidCredentials):
+		w.WriteHeader(http.StatusUnauthorized)
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request, userID int64) {
 	if rt.orders == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -61,7 +133,7 @@ func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = rt.orders.UploadOrder(r.Context(), mvpUserID, string(body))
+	err = rt.orders.UploadOrder(r.Context(), userID, string(body))
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusAccepted)
@@ -78,13 +150,13 @@ func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (rt *Router) handleListOrders(w http.ResponseWriter, r *http.Request) {
+func (rt *Router) handleListOrders(w http.ResponseWriter, r *http.Request, userID int64) {
 	if rt.orders == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	orders, err := rt.orders.ListOrders(r.Context(), mvpUserID)
+	orders, err := rt.orders.ListOrders(r.Context(), userID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -114,11 +186,71 @@ type orderResponse struct {
 	UploadedAt string   `json:"uploaded_at"`
 }
 
+type credentialsRequest struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+func readCredentials(w http.ResponseWriter, r *http.Request) (credentialsRequest, bool) {
+	var request credentialsRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return credentialsRequest{}, false
+	}
+	return request, true
+}
+
+func (rt *Router) authenticate(w http.ResponseWriter, userID int64) {
+	token := rt.tokens.Issue(userID)
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	w.Header().Set("Authorization", "Bearer "+token)
+}
+
+func (rt *Router) authorize(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	if rt.tokens == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return 0, false
+	}
+
+	token := tokenFromRequest(r)
+	userID, err := rt.tokens.Verify(token)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return 0, false
+	}
+
+	ctx := context.WithValue(r.Context(), userIDContextKey{}, userID)
+	*r = *r.WithContext(ctx)
+	return userID, true
+}
+
+func tokenFromRequest(r *http.Request) string {
+	if cookie, err := r.Cookie(authCookieName); err == nil {
+		return cookie.Value
+	}
+
+	const bearerPrefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, bearerPrefix) {
+		return strings.TrimSpace(strings.TrimPrefix(header, bearerPrefix))
+	}
+
+	return ""
+}
+
+type userIDContextKey struct{}
 
 func pointsPtrToFloat64(points *domain.Points) *float64 {
 	if points == nil {
