@@ -2,12 +2,14 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Ошибки проверки токена авторизации.
@@ -22,9 +24,12 @@ type TokenManager struct {
 }
 
 // NewTokenManager создает менеджер токенов с указанным секретом подписи.
+// Если секрет пустой, используется случайный секрет на время жизни процесса.
 func NewTokenManager(secret string) *TokenManager {
 	if secret == "" {
-		secret = "gophermart-dev-secret"
+		return &TokenManager{
+			secret: randomSecret(),
+		}
 	}
 	return &TokenManager{
 		secret: []byte(secret),
@@ -68,4 +73,16 @@ func (m *TokenManager) sign(payload string) string {
 	mac := hmac.New(sha256.New, m.secret)
 	_, _ = mac.Write([]byte(payload))
 	return fmt.Sprintf("%x", mac.Sum(nil))
+}
+
+func randomSecret() []byte {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return []byte(strconv.FormatInt(timeNowUnixNano(), 10))
+	}
+	return secret
+}
+
+var timeNowUnixNano = func() int64 {
+	return time.Now().UnixNano()
 }

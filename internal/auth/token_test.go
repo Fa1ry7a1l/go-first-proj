@@ -31,3 +31,12 @@ func TestTokenManagerRejectsWrongSignature(t *testing.T) {
 		t.Fatalf("Verify error = %v, want %v", err, ErrInvalidToken)
 	}
 }
+
+func TestTokenManagerUsesRandomSecretWhenEmpty(t *testing.T) {
+	first := NewTokenManager("")
+	second := NewTokenManager("")
+
+	if _, err := second.Verify(first.Issue(42)); err != ErrInvalidToken {
+		t.Fatalf("Verify error = %v, want %v", err, ErrInvalidToken)
+	}
+}
