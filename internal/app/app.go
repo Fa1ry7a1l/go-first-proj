@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Fa1ry7a1l/go-first-proj/internal/accrual"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/auth"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/config"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/httpapi"
@@ -21,6 +22,7 @@ const shutdownTimeout = 5 * time.Second
 type App struct {
 	cfg    config.Config
 	server *http.Server
+	worker *accrual.Worker
 	close  func()
 }
 
@@ -29,6 +31,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	var orderService *service.OrderService
 	var userService *service.UserService
 	var balanceService *service.BalanceService
+	var accrualWorker *accrual.Worker
 	closeStorage := func() {}
 
 	if cfg.DatabaseURI != "" {
@@ -39,6 +42,9 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		orderService = service.NewOrderService(storage)
 		userService = service.NewUserService(storage)
 		balanceService = service.NewBalanceService(storage)
+		if cfg.AccrualSystemAddress != "" {
+			accrualWorker = accrual.NewWorker(storage, accrual.NewClient(cfg.AccrualSystemAddress))
+		}
 		closeStorage = storage.Close
 	}
 	tokenManager := auth.NewTokenManager("")
@@ -50,7 +56,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			Handler:           httpapi.NewRouter(userService, orderService, balanceService, tokenManager),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-		close: closeStorage,
+		worker: accrualWorker,
+		close:  closeStorage,
 	}, nil
 }
 
@@ -60,6 +67,10 @@ func (a *App) Run(ctx context.Context) error {
 	defer a.close()
 
 	errCh := make(chan error, 1)
+
+	if a.worker != nil {
+		go a.worker.Run(ctx)
+	}
 
 	go func() {
 		log.Printf("starting gophermart on %s", a.cfg.RunAddress)

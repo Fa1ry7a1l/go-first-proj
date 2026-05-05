@@ -26,6 +26,12 @@ type OrderStorage interface {
 
 	// ListUserOrders возвращает заказы пользователя в порядке от новых к старым.
 	ListUserOrders(ctx context.Context, userID int64) ([]domain.Order, error)
+
+	// ListPendingOrders возвращает заказы, которые еще ожидают финального статуса начислений.
+	ListPendingOrders(ctx context.Context, limit int) ([]domain.Order, error)
+
+	// UpdateOrderAccrual обновляет статус заказа и начисленные баллы.
+	UpdateOrderAccrual(ctx context.Context, number string, status domain.OrderStatus, accrual *domain.Points) error
 }
 
 // BalanceStorage описывает операции чтения баланса и записи списаний.

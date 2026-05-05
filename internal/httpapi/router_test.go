@@ -265,6 +265,14 @@ func (s *httpFakeStorage) ListUserOrders(_ context.Context, userID int64) ([]dom
 	return orders, nil
 }
 
+func (s *httpFakeStorage) ListPendingOrders(_ context.Context, _ int) ([]domain.Order, error) {
+	return nil, nil
+}
+
+func (s *httpFakeStorage) UpdateOrderAccrual(_ context.Context, _ string, _ domain.OrderStatus, _ *domain.Points) error {
+	return nil
+}
+
 func (s *httpFakeStorage) GetBalance(_ context.Context, userID int64) (domain.Balance, error) {
 	var accrued domain.Points
 	for _, order := range s.orders {

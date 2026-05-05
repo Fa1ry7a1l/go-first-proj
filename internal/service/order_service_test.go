@@ -90,3 +90,11 @@ func (s *fakeOrderStorage) GetOrderByNumber(_ context.Context, _ string) (domain
 func (s *fakeOrderStorage) ListUserOrders(_ context.Context, _ int64) ([]domain.Order, error) {
 	return nil, nil
 }
+
+func (s *fakeOrderStorage) ListPendingOrders(_ context.Context, _ int) ([]domain.Order, error) {
+	return nil, nil
+}
+
+func (s *fakeOrderStorage) UpdateOrderAccrual(_ context.Context, _ string, _ domain.OrderStatus, _ *domain.Points) error {
+	return nil
+}
