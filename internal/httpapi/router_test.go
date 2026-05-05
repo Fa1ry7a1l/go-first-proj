@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -183,7 +182,7 @@ func TestGetBalance(t *testing.T) {
 	}
 }
 
-func TestGetBalanceWritesGzipResponse(t *testing.T) {
+func TestGetBalanceIgnoresGzipResponseEncoding(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
 	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
@@ -197,22 +196,11 @@ func TestGetBalanceWritesGzipResponse(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if response.Header().Get("Content-Encoding") != "gzip" {
-		t.Fatalf("Content-Encoding = %q, want gzip", response.Header().Get("Content-Encoding"))
+	if response.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("Content-Encoding = %q, want empty", response.Header().Get("Content-Encoding"))
 	}
-
-	reader, err := gzip.NewReader(response.Body)
-	if err != nil {
-		t.Fatalf("create gzip reader: %v", err)
-	}
-	defer reader.Close()
-
-	body, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read gzip body: %v", err)
-	}
-	if !strings.Contains(string(body), `"current":0`) {
-		t.Fatalf("body = %s, want current field", body)
+	if !strings.Contains(response.Body.String(), `"current":0`) {
+		t.Fatalf("body = %s, want current field", response.Body.String())
 	}
 }
 
