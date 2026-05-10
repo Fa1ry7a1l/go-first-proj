@@ -12,6 +12,7 @@ const (
 	envRunAddress           = "RUN_ADDRESS"
 	envDatabaseURI          = "DATABASE_URI"
 	envAccrualSystemAddress = "ACCRUAL_SYSTEM_ADDRESS"
+	envAuthSecret           = "AUTH_SECRET"
 )
 
 // Config содержит настройки, необходимые для запуска сервиса.
@@ -24,6 +25,9 @@ type Config struct {
 
 	// AccrualSystemAddress содержит базовый адрес внешней системы начислений.
 	AccrualSystemAddress string
+
+	// AuthSecret содержит секрет для подписи токенов авторизации.
+	AuthSecret string
 }
 
 // Parse читает конфигурацию из аргументов командной строки и переменных окружения.
@@ -43,6 +47,7 @@ func ParseFromArgs(args []string, getenv func(string) string) Config {
 	flags.StringVar(&cfg.RunAddress, "a", cfg.RunAddress, "HTTP server run address")
 	flags.StringVar(&cfg.DatabaseURI, "d", cfg.DatabaseURI, "PostgreSQL database URI")
 	flags.StringVar(&cfg.AccrualSystemAddress, "r", cfg.AccrualSystemAddress, "accrual system address")
+	flags.StringVar(&cfg.AuthSecret, "s", cfg.AuthSecret, "auth token signing secret")
 
 	_ = flags.Parse(args)
 
@@ -54,6 +59,9 @@ func ParseFromArgs(args []string, getenv func(string) string) Config {
 	}
 	if value := getenv(envAccrualSystemAddress); value != "" {
 		cfg.AccrualSystemAddress = value
+	}
+	if value := getenv(envAuthSecret); value != "" {
+		cfg.AuthSecret = value
 	}
 
 	return cfg

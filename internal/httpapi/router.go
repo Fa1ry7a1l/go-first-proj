@@ -10,9 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Fa1ry7a1l/go-first-proj/internal/auth"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/domain"
-	"github.com/Fa1ry7a1l/go-first-proj/internal/service"
 )
 
 const (
@@ -21,18 +19,57 @@ const (
 
 // Router обрабатывает HTTP-запросы к API Gophermart.
 type Router struct {
-	users    *service.UserService
-	orders   *service.OrderService
-	balances *service.BalanceService
-	tokens   *auth.TokenManager
+	users    UserService
+	orders   OrderService
+	balances BalanceService
+	tokens   TokenService
+}
+
+// UserService описывает пользовательские операции, нужные HTTP-слою.
+type UserService interface {
+	// Register регистрирует нового пользователя.
+	Register(ctx context.Context, login string, password string) (domain.User, error)
+
+	// Login проверяет логин и пароль пользователя.
+	Login(ctx context.Context, login string, password string) (domain.User, error)
+}
+
+// OrderService описывает операции с заказами, нужные HTTP-слою.
+type OrderService interface {
+	// UploadOrder загружает номер заказа пользователя.
+	UploadOrder(ctx context.Context, userID int64, number string) error
+
+	// ListOrders возвращает заказы пользователя.
+	ListOrders(ctx context.Context, userID int64) ([]domain.Order, error)
+}
+
+// BalanceService описывает операции с балансом, нужные HTTP-слою.
+type BalanceService interface {
+	// GetBalance возвращает текущий баланс пользователя.
+	GetBalance(ctx context.Context, userID int64) (domain.Balance, error)
+
+	// Withdraw регистрирует списание баллов.
+	Withdraw(ctx context.Context, userID int64, orderNumber string, sum domain.Points) error
+
+	// ListWithdrawals возвращает историю списаний пользователя.
+	ListWithdrawals(ctx context.Context, userID int64) ([]domain.Withdrawal, error)
+}
+
+// TokenService описывает операции с токенами авторизации, нужные HTTP-слою.
+type TokenService interface {
+	// Issue создает токен для пользователя.
+	Issue(userID int64) string
+
+	// Verify проверяет токен и возвращает идентификатор пользователя.
+	Verify(token string) (int64, error)
 }
 
 // NewRouter создает дерево HTTP-обработчиков сервиса.
 func NewRouter(
-	users *service.UserService,
-	orders *service.OrderService,
-	balances *service.BalanceService,
-	tokens *auth.TokenManager,
+	users UserService,
+	orders OrderService,
+	balances BalanceService,
+	tokens TokenService,
 ) http.Handler {
 	router := &Router{
 		users:    users,
@@ -42,13 +79,14 @@ func NewRouter(
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", handlePing)
-	mux.HandleFunc("/api/user/register", router.handleRegister)
-	mux.HandleFunc("/api/user/login", router.handleLogin)
-	mux.HandleFunc("/api/user/orders", router.handleUserOrders)
-	mux.HandleFunc("/api/user/balance", router.handleBalance)
-	mux.HandleFunc("/api/user/balance/withdraw", router.handleWithdraw)
-	mux.HandleFunc("/api/user/withdrawals", router.handleWithdrawals)
+	mux.HandleFunc("GET /ping", handlePing)
+	mux.HandleFunc("POST /api/user/register", router.handleRegister)
+	mux.HandleFunc("POST /api/user/login", router.handleLogin)
+	mux.HandleFunc("POST /api/user/orders", router.handleUploadOrder)
+	mux.HandleFunc("GET /api/user/orders", router.handleListOrders)
+	mux.HandleFunc("GET /api/user/balance", router.handleBalance)
+	mux.HandleFunc("POST /api/user/balance/withdraw", router.handleWithdraw)
+	mux.HandleFunc("GET /api/user/withdrawals", router.handleWithdrawals)
 	return gzipMiddleware(mux)
 }
 
@@ -57,29 +95,9 @@ func handlePing(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("pong"))
 }
 
-func (rt *Router) handleUserOrders(w http.ResponseWriter, r *http.Request) {
-	userID, ok := rt.authorize(w, r)
-	if !ok {
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPost:
-		rt.handleUploadOrder(w, r, userID)
-	case http.MethodGet:
-		rt.handleListOrders(w, r, userID)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
 func (rt *Router) handleBalance(w http.ResponseWriter, r *http.Request) {
 	userID, ok := rt.authorize(w, r)
 	if !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	if rt.balances == nil {
@@ -102,10 +120,6 @@ func (rt *Router) handleBalance(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleWithdraw(w http.ResponseWriter, r *http.Request) {
 	userID, ok := rt.authorize(w, r)
 	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	if rt.balances == nil {
@@ -139,10 +153,6 @@ func (rt *Router) handleWithdrawals(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
 	if rt.balances == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -171,10 +181,6 @@ func (rt *Router) handleWithdrawals(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
 	if rt.users == nil || rt.tokens == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -200,10 +206,6 @@ func (rt *Router) handleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Router) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
 	if rt.users == nil || rt.tokens == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -228,7 +230,11 @@ func (rt *Router) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request, userID int64) {
+func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.authorize(w, r)
+	if !ok {
+		return
+	}
 	if rt.orders == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -257,7 +263,11 @@ func (rt *Router) handleUploadOrder(w http.ResponseWriter, r *http.Request, user
 	}
 }
 
-func (rt *Router) handleListOrders(w http.ResponseWriter, r *http.Request, userID int64) {
+func (rt *Router) handleListOrders(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.authorize(w, r)
+	if !ok {
+		return
+	}
 	if rt.orders == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

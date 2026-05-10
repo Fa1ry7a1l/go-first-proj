@@ -4,7 +4,7 @@ package app
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -16,7 +16,10 @@ import (
 	"github.com/Fa1ry7a1l/go-first-proj/internal/storage/postgres"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout       = 5 * time.Second
+	developmentAuthSecret = "gophermart-development-auth-secret"
+)
 
 // App представляет запускаемое приложение Gophermart.
 type App struct {
@@ -47,7 +50,16 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		closeStorage = storage.Close
 	}
-	tokenManager := auth.NewTokenManager("")
+	authSecret := cfg.AuthSecret
+	if authSecret == "" {
+		slog.Warn(
+			"секрет подписи токенов не задан, используется dev-секрет",
+			"source",
+			"config",
+		)
+		authSecret = developmentAuthSecret
+	}
+	tokenManager := auth.NewTokenManager(authSecret)
 
 	return &App{
 		cfg: cfg,
@@ -73,7 +85,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	go func() {
-		log.Printf("starting gophermart on %s", a.cfg.RunAddress)
+		slog.Info("запуск gophermart", "address", a.cfg.RunAddress)
 		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return

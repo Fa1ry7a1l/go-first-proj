@@ -3,7 +3,7 @@ package accrual
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/Fa1ry7a1l/go-first-proj/internal/domain"
@@ -52,7 +52,7 @@ func (w *Worker) Run(ctx context.Context) {
 func (w *Worker) process(ctx context.Context) time.Duration {
 	orders, err := w.orders.ListPendingOrders(ctx, w.batchSize)
 	if err != nil {
-		log.Printf("list pending orders: %v", err)
+		slog.Error("не удалось получить заказы для проверки начислений", "error", err)
 		return w.pollInterval
 	}
 	if len(orders) == 0 {
@@ -64,12 +64,12 @@ func (w *Worker) process(ctx context.Context) time.Duration {
 		switch {
 		case err == nil:
 			if err := w.orders.UpdateOrderAccrual(ctx, order.Number, result.Status, result.Accrual); err != nil {
-				log.Printf("update accrual for order %s: %v", order.Number, err)
+				slog.Error("не удалось обновить начисление заказа", "order", order.Number, "error", err)
 			}
 		case errors.Is(err, ErrNoAccrualData):
 			if order.Status == domain.OrderStatusNew {
 				if err := w.orders.UpdateOrderAccrual(ctx, order.Number, domain.OrderStatusProcessing, nil); err != nil {
-					log.Printf("mark order %s processing: %v", order.Number, err)
+					slog.Error("не удалось перевести заказ в обработку", "order", order.Number, "error", err)
 				}
 			}
 		case errors.Is(err, ErrRateLimited):
@@ -78,7 +78,7 @@ func (w *Worker) process(ctx context.Context) time.Duration {
 			}
 			return time.Minute
 		default:
-			log.Printf("fetch accrual for order %s: %v", order.Number, err)
+			slog.Error("не удалось получить начисление заказа", "order", order.Number, "error", err)
 		}
 	}
 

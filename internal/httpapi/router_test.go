@@ -13,17 +13,12 @@ import (
 
 	"github.com/Fa1ry7a1l/go-first-proj/internal/auth"
 	"github.com/Fa1ry7a1l/go-first-proj/internal/domain"
-	"github.com/Fa1ry7a1l/go-first-proj/internal/service"
+	"github.com/Fa1ry7a1l/go-first-proj/internal/luhn"
 )
 
 func TestRegisterAuthenticatesUser(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	router := NewRouter(
-		service.NewUserService(storage),
-		service.NewOrderService(storage),
-		service.NewBalanceService(storage),
-		auth.NewTokenManager("secret"),
-	)
+	router := newTestRouter(storage, auth.NewTokenManager("secret"))
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"user","password":"secret"}`))
 	response := httptest.NewRecorder()
@@ -43,12 +38,7 @@ func TestRegisterAuthenticatesUser(t *testing.T) {
 
 func TestRegisterRejectsDuplicateLogin(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	router := NewRouter(
-		service.NewUserService(storage),
-		service.NewOrderService(storage),
-		service.NewBalanceService(storage),
-		auth.NewTokenManager("secret"),
-	)
+	router := newTestRouter(storage, auth.NewTokenManager("secret"))
 
 	first := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(`{"login":"user","password":"secret"}`))
 	router.ServeHTTP(httptest.NewRecorder(), first)
@@ -64,10 +54,9 @@ func TestRegisterRejectsDuplicateLogin(t *testing.T) {
 
 func TestLoginRejectsInvalidPassword(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	userService := service.NewUserService(storage)
-	router := NewRouter(userService, service.NewOrderService(storage), service.NewBalanceService(storage), auth.NewTokenManager("secret"))
+	router := newTestRouter(storage, auth.NewTokenManager("secret"))
 
-	if _, err := userService.Register(context.Background(), "user", "secret"); err != nil {
+	if _, err := storage.Register(context.Background(), "user", "secret"); err != nil {
 		t.Fatalf("Register returned error: %v", err)
 	}
 
@@ -82,12 +71,7 @@ func TestLoginRejectsInvalidPassword(t *testing.T) {
 
 func TestOrdersRequireAuthorization(t *testing.T) {
 	storage := newHTTPFakeStorage()
-	router := NewRouter(
-		service.NewUserService(storage),
-		service.NewOrderService(storage),
-		service.NewBalanceService(storage),
-		auth.NewTokenManager("secret"),
-	)
+	router := newTestRouter(storage, auth.NewTokenManager("secret"))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
 	response := httptest.NewRecorder()
@@ -101,7 +85,7 @@ func TestOrdersRequireAuthorization(t *testing.T) {
 func TestUploadOrderUsesAuthenticatedUser(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader("12345678903"))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -119,7 +103,7 @@ func TestUploadOrderUsesAuthenticatedUser(t *testing.T) {
 func TestUploadOrderReadsGzipBody(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/orders", bytes.NewReader(gzipBytes(t, "12345678903")))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -135,7 +119,7 @@ func TestUploadOrderReadsGzipBody(t *testing.T) {
 func TestUploadOrderRejectsBrokenGzipBody(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader("not gzip"))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -162,7 +146,7 @@ func TestGetBalance(t *testing.T) {
 		Sum:    2550,
 	})
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -185,7 +169,7 @@ func TestGetBalance(t *testing.T) {
 func TestGetBalanceIgnoresGzipResponseEncoding(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -214,7 +198,7 @@ func TestWithdraw(t *testing.T) {
 		Accrual: &points,
 	}
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"12345678903","sum":25.5}`))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -235,7 +219,7 @@ func TestWithdraw(t *testing.T) {
 func TestWithdrawRejectsInsufficientFunds(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"12345678903","sum":25.5}`))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -250,7 +234,7 @@ func TestWithdrawRejectsInsufficientFunds(t *testing.T) {
 func TestWithdrawRejectsInvalidSum(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/user/balance/withdraw", strings.NewReader(`{"order":"12345678903","sum":0}`))
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -265,7 +249,7 @@ func TestWithdrawRejectsInvalidSum(t *testing.T) {
 func TestWithdrawalsReturnsNoContentWhenEmpty(t *testing.T) {
 	storage := newHTTPFakeStorage()
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/user/withdrawals", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -286,7 +270,7 @@ func TestWithdrawalsReturnsRFC3339Time(t *testing.T) {
 		ProcessedAt: time.Date(2026, 5, 5, 10, 11, 12, 0, time.UTC),
 	})
 	tokenManager := auth.NewTokenManager("secret")
-	router := NewRouter(service.NewUserService(storage), service.NewOrderService(storage), service.NewBalanceService(storage), tokenManager)
+	router := newTestRouter(storage, tokenManager)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/user/withdrawals", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenManager.Issue(12))
@@ -336,6 +320,93 @@ func newHTTPFakeStorage() *httpFakeStorage {
 		users:      make(map[string]domain.User),
 		orders:     make(map[string]domain.Order),
 	}
+}
+
+func newTestRouter(storage *httpFakeStorage, tokenManager *auth.TokenManager) http.Handler {
+	return NewRouter(storage, storage, storage, tokenManager)
+}
+
+func (s *httpFakeStorage) Register(_ context.Context, login string, password string) (domain.User, error) {
+	login = strings.TrimSpace(login)
+	if login == "" || password == "" {
+		return domain.User{}, domain.ErrUserInvalidCredentialsFormat
+	}
+
+	passwordHash, err := auth.HashPassword(password)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return s.CreateUser(context.Background(), domain.User{
+		Login:        login,
+		PasswordHash: passwordHash,
+	})
+}
+
+func (s *httpFakeStorage) Login(_ context.Context, login string, password string) (domain.User, error) {
+	user, err := s.GetUserByLogin(context.Background(), strings.TrimSpace(login))
+	if err != nil {
+		return domain.User{}, domain.ErrInvalidCredentials
+	}
+	if !auth.CheckPassword(user.PasswordHash, password) {
+		return domain.User{}, domain.ErrInvalidCredentials
+	}
+	return user, nil
+}
+
+func (s *httpFakeStorage) UploadOrder(ctx context.Context, userID int64, number string) error {
+	number = strings.TrimSpace(number)
+	if !digitsOnlyTest(number) {
+		return domain.ErrOrderInvalidFormat
+	}
+	if !luhn.Valid(number) {
+		return domain.ErrOrderInvalidNumber
+	}
+
+	existing, err := s.GetOrderByNumber(ctx, number)
+	if err == nil {
+		if existing.UserID == userID {
+			return domain.ErrOrderAlreadyUploadedByUser
+		}
+		return domain.ErrOrderUploadedByAnotherUser
+	}
+
+	return s.CreateOrder(ctx, domain.Order{
+		UserID: userID,
+		Number: number,
+		Status: domain.OrderStatusNew,
+	})
+}
+
+func (s *httpFakeStorage) ListOrders(ctx context.Context, userID int64) ([]domain.Order, error) {
+	return s.ListUserOrders(ctx, userID)
+}
+
+func (s *httpFakeStorage) Withdraw(ctx context.Context, userID int64, orderNumber string, sum domain.Points) error {
+	orderNumber = strings.TrimSpace(orderNumber)
+	if !luhn.Valid(orderNumber) {
+		return domain.ErrOrderInvalidNumber
+	}
+	if sum <= 0 {
+		return domain.ErrWithdrawalInvalidSum
+	}
+	return s.CreateWithdrawal(ctx, domain.Withdrawal{
+		UserID:      userID,
+		OrderNumber: orderNumber,
+		Sum:         sum,
+	})
+}
+
+func digitsOnlyTest(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *httpFakeStorage) CreateUser(_ context.Context, user domain.User) (domain.User, error) {

@@ -14,6 +14,9 @@ func TestParseFromArgsUsesDefaults(t *testing.T) {
 	if cfg.AccrualSystemAddress != "" {
 		t.Fatalf("AccrualSystemAddress = %q, want empty", cfg.AccrualSystemAddress)
 	}
+	if cfg.AuthSecret != "" {
+		t.Fatalf("AuthSecret = %q, want empty", cfg.AuthSecret)
+	}
 }
 
 func TestParseFromArgsReadsFlags(t *testing.T) {
@@ -21,6 +24,7 @@ func TestParseFromArgsReadsFlags(t *testing.T) {
 		"-a", "127.0.0.1:9090",
 		"-d", "postgres://user:pass@localhost/db",
 		"-r", "http://localhost:8081",
+		"-s", "flag-secret",
 	}, emptyEnv)
 
 	if cfg.RunAddress != "127.0.0.1:9090" {
@@ -32,6 +36,9 @@ func TestParseFromArgsReadsFlags(t *testing.T) {
 	if cfg.AccrualSystemAddress != "http://localhost:8081" {
 		t.Fatalf("AccrualSystemAddress = %q", cfg.AccrualSystemAddress)
 	}
+	if cfg.AuthSecret != "flag-secret" {
+		t.Fatalf("AuthSecret = %q", cfg.AuthSecret)
+	}
 }
 
 func TestParseFromArgsEnvOverridesFlags(t *testing.T) {
@@ -39,12 +46,14 @@ func TestParseFromArgsEnvOverridesFlags(t *testing.T) {
 		envRunAddress:           "localhost:7070",
 		envDatabaseURI:          "postgres://env/db",
 		envAccrualSystemAddress: "http://accrual",
+		envAuthSecret:           "env-secret",
 	}
 
 	cfg := ParseFromArgs([]string{
 		"-a", "127.0.0.1:9090",
 		"-d", "postgres://flag/db",
 		"-r", "http://flag-accrual",
+		"-s", "flag-secret",
 	}, func(key string) string {
 		return env[key]
 	})
@@ -57,6 +66,9 @@ func TestParseFromArgsEnvOverridesFlags(t *testing.T) {
 	}
 	if cfg.AccrualSystemAddress != env[envAccrualSystemAddress] {
 		t.Fatalf("AccrualSystemAddress = %q, want %q", cfg.AccrualSystemAddress, env[envAccrualSystemAddress])
+	}
+	if cfg.AuthSecret != env[envAuthSecret] {
+		t.Fatalf("AuthSecret = %q, want %q", cfg.AuthSecret, env[envAuthSecret])
 	}
 }
 
